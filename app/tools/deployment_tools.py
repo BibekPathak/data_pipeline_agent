@@ -98,7 +98,12 @@ class DeploymentTools:
             quality = {"passed": quality_report.passed}
 
         metric_delta = 0.0
-        if current_run.final_df is not None and candidate_run.final_df is not None:
+        metric_delta_valid = current_run.ok and candidate_run.ok
+        if (
+            metric_delta_valid
+            and current_run.final_df is not None
+            and candidate_run.final_df is not None
+        ):
             for col in current_run.final_df.columns:
                 if current_run.final_df[col].dtype.is_numeric():
                     s_cur = float(current_run.final_df[col].sum())

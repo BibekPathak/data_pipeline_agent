@@ -44,6 +44,8 @@ from app.models import (
     ValidationReport,
 )
 from app.pipeline.schemas import infer_schema
+from app.observability.metrics import MetricRepository
+from app.observability.monitor import HealthMonitor
 from app.tools.context import ToolContext
 from app.tools.registry import ToolRegistry
 
@@ -102,6 +104,8 @@ class Orchestrator:
         self.registry = ToolRegistry(ctx, self.policy)
         self.diagnosis = DiagnosisEngine()
         self.planner = Planner()
+        self.monitor = HealthMonitor()
+        self.metrics = MetricRepository(ctx.store.metadata)
 
     async def run(self, pipeline_id: str, df: pl.DataFrame) -> PipelineTriageState:
         """Run triage from OBSERVE to a final state. Bounded and policy-gated."""
@@ -143,6 +147,8 @@ class Orchestrator:
         await self.ctx.store.metadata.record_run(
             run_id=state.run_id, pipeline_id=pipeline_id, status="OBSERVE"
         )
+        # Record a baseline/metric snapshot for anomaly detection history.
+        await self.metrics.record(pipeline.base_input_schema().table, df)
         await self._persist(state)
 
         # ---- DETECT ----
@@ -285,12 +291,27 @@ class Orchestrator:
         health = await self.registry.invoke(
             "monitor_canary", Phase.MONITOR, pipeline_id=pipeline_id
         )
-        canary_ok = health.get("passed", True) and state.canary_metrics.get(
-            "status", "CANARY_PASSED"
-        ) == "CANARY_PASSED"
-
-        if not canary_ok:
-            await self._rollback(state, pipeline_id, reason="canary/health check failed")
+        # Record candidate metrics (post-fix) for future baselines.
+        await self.metrics.record(
+            f"{pipeline.base_input_schema().table}:candidate",
+            df,
+            at=f"{state.run_id}",
+        )
+        # Formal gate: use the HealthMonitor against the canary-derived metrics.
+        report = self.monitor.evaluate_canary(state.canary_metrics)
+        state.schema_context["health"] = {
+            "healthy": report.healthy,
+            "checks": [
+                {"name": c.name, "passed": c.passed, "observed": c.observed}
+                for c in report.checks
+            ],
+        }
+        if not report.healthy or not health.get("passed", True):
+            await self._rollback(
+                state,
+                pipeline_id,
+                reason=f"monitor health failed: {[c.name for c in report.failed_checks()]}",
+            )
             return
 
         state.deployment_status = DeploymentStatus.ACTIVE

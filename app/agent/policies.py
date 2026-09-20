@@ -42,6 +42,7 @@ TOOL_ACTION_CLASS: dict[str, ActionClass] = {
     "sample_rows": ActionClass.READ_ONLY,
     "run_quality_checks": ActionClass.READ_ONLY,
     "compare_distributions": ActionClass.READ_ONLY,
+    "get_metric_history": ActionClass.READ_ONLY,
     # pipeline
     "get_pipeline": ActionClass.READ_ONLY,
     "get_pipeline_run": ActionClass.READ_ONLY,

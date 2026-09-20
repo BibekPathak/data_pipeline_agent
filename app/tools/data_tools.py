@@ -23,6 +23,7 @@ class DataTools:
             self.sample_rows,
             self.run_quality_checks_tool,
             self.compare_distributions,
+            self.get_metric_history,
         ]
 
     @tool("profile_dataset", ActionClass.READ_ONLY, "Profile a dataset (rows, per-column stats).")
@@ -75,3 +76,9 @@ class DataTools:
             "anomalies": [a.model_dump() for a in anomalies],
             "history": history,
         }
+
+    @tool("get_metric_history", ActionClass.READ_ONLY,
+          "Return historical metric snapshots for a table.")
+    async def get_metric_history(self, table: str) -> dict:
+        history = await self.ctx.store.metadata.get_metric_history(table)
+        return {"table": table, "history": history}
