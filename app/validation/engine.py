@@ -40,6 +40,8 @@ def shadow_validate(
     run_id: str = "",
     expected_schema: SchemaDefinition | None = None,
     input_row_count: int | None = None,
+    constraints: dict | None = None,
+    known_good: pl.DataFrame | None = None,
 ) -> ValidationReport:
     report = ValidationReport(run_id=run_id)
     cand = candidate.final_df if candidate.ok else None
@@ -87,6 +89,37 @@ def shadow_validate(
             mn = float(cand[col].min())
             _add(report, f"invariant.{col}", mn >= 0 or mn is None,
                  expected=">=0", observed=mn)
+
+    # --- explicit constraints (uniqueness / range) ---
+    constraints = constraints or {}
+    unique_cols = constraints.get("unique", [])
+    for col in unique_cols:
+        if col not in cand.columns:
+            continue
+        uniq = cand[col].n_unique() == cand.height
+        _add(report, f"unique.{col}", uniq,
+             expected="unique", observed=f"{cand[col].n_unique()}/{cand.height}",
+             message=f"{col} not unique" if not uniq else None)
+    for col, bounds in (constraints.get("range", {}) or {}).items():
+        if col not in cand.columns or not cand[col].dtype.is_numeric():
+            continue
+        mn = float(cand[col].min())
+        mx = float(cand[col].max())
+        lo = float(bounds[0])
+        hi = float(bounds[1])
+        ok = lo <= mn and mx <= hi
+        _add(report, f"range.{col}", ok, expected=f"[{lo},{hi}]", observed=f"[{mn},{mx}]",
+             message=f"{col} out of range" if not ok else None)
+
+    # --- regression vs known-good historical output ---
+    if known_good is not None:
+        if cand.height != known_good.height:
+            _add(report, "regression.row_count", False,
+                 expected=known_good.height, observed=cand.height,
+                 message="row count differs from known-good output")
+        else:
+            _add(report, "regression.row_count", True,
+                 expected=known_good.height, observed=cand.height)
 
     # --- delta comparison when current is healthy ---
     if cur is not None:

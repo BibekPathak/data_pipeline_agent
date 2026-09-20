@@ -1,0 +1,67 @@
+{
+  "id": "orders",
+  "name": "Orders Revenue Pipeline",
+  "version": "1.0",
+  "source": "fixtures:orders.csv",
+  "schedule": "daily",
+  "stages": [
+    {
+      "id": "orders_clean",
+      "name": "clean.orders",
+      "input_schema": {
+        "table": "orders",
+        "version": 3,
+        "columns": [
+          { "name": "order_id", "type": "INTEGER" },
+          { "name": "customer_id", "type": "INTEGER" },
+          { "name": "amount", "type": "DOUBLE" },
+          { "name": "currency", "type": "VARCHAR" },
+          { "name": "created_at", "type": "TIMESTAMP" },
+          { "name": "status", "type": "VARCHAR" }
+        ]
+      },
+      "output_schema": {
+        "table": "orders",
+        "version": 3,
+        "columns": [
+          { "name": "order_id", "type": "INTEGER" },
+          { "name": "customer_id", "type": "INTEGER" },
+          { "name": "amount", "type": "DOUBLE" },
+          { "name": "currency", "type": "VARCHAR" },
+          { "name": "created_at", "type": "TIMESTAMP" },
+          { "name": "status", "type": "VARCHAR" }
+        ]
+      },
+      "transformation": "clean_orders",
+      "dependencies": []
+    },
+    {
+      "id": "daily_revenue",
+      "name": "daily_revenue",
+      "input_schema": {
+        "table": "orders",
+        "version": 3,
+        "columns": [
+          { "name": "order_id", "type": "INTEGER" },
+          { "name": "customer_id", "type": "INTEGER" },
+          { "name": "amount", "type": "DOUBLE" },
+          { "name": "currency", "type": "VARCHAR" },
+          { "name": "created_at", "type": "TIMESTAMP" },
+          { "name": "status", "type": "VARCHAR" }
+        ]
+      },
+      "output_schema": {
+        "table": "daily_revenue",
+        "version": 1,
+        "columns": [
+          { "name": "order_id", "type": "INTEGER" },
+          { "name": "currency", "type": "VARCHAR" },
+          { "name": "revenue", "type": "DOUBLE" },
+          { "name": "earliest_created_at", "type": "TIMESTAMP" }
+        ]
+      },
+      "transformation": "aggregate_daily_revenue",
+      "dependencies": ["orders_clean"]
+    }
+  ]
+}
