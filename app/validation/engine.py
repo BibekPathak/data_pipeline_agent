@@ -1,0 +1,113 @@
+"""Shadow validation engine.
+
+Compares the *current* pipeline output against the *candidate* (fixed) output on
+the same observed data, producing a :class:`ValidationReport`. Used before any
+deployment.
+
+Two cases:
+  - Current is healthy         -> delta checks (row count, aggregates, quality).
+  - Current is broken (drift)  -> validate candidate against the pipeline's
+    declared output schema and absolute invariants (schema, quality, no data
+    loss vs input row count, non-negative business metrics).
+
+The candidate must never be allowed to silently destroy data or corrupt metrics.
+"""
+
+from __future__ import annotations
+
+import polars as pl
+
+from app.models import SchemaDefinition, ValidationCheck, ValidationReport, ValidationStatus
+from app.pipeline.runner import RunResult
+from app.pipeline.schemas import infer_schema
+
+
+def _add(report: ValidationReport, name: str, ok: bool, **kw) -> None:
+    report.checks.append(
+        ValidationCheck(
+            name=name,
+            status=ValidationStatus.PASSED if ok else ValidationStatus.FAILED,
+            **kw,
+        )
+    )
+
+
+def shadow_validate(
+    current: RunResult,
+    candidate: RunResult,
+    *,
+    pipeline_id: str = "",
+    run_id: str = "",
+    expected_schema: SchemaDefinition | None = None,
+    input_row_count: int | None = None,
+) -> ValidationReport:
+    report = ValidationReport(run_id=run_id)
+    cand = candidate.final_df if candidate.ok else None
+    cur = current.final_df if current.ok else None
+
+    if cand is None:
+        report.checks.append(
+            ValidationCheck(name="candidate_output", status=ValidationStatus.FAILED,
+                            message="candidate pipeline produced no output")
+        )
+        return report
+
+    # --- candidate must match the expected output schema (if provided) ---
+    if expected_schema is not None:
+        inferred = infer_schema(cand, table=expected_schema.table)
+        from app.data.schema import compare_schemas
+
+        mismatches = compare_schemas(expected_schema, inferred)
+        _add(report, "schema", not mismatches,
+             expected=expected_schema.model_dump(), observed=inferred.model_dump(),
+             message=f"schema mismatches: {[m.column for m in mismatches]}")
+    else:
+        _add(report, "schema", True)
+
+    # --- data-loss guard vs input rows ---
+    if input_row_count is not None:
+        loss_ok = cand.height >= input_row_count * 0.95
+        _add(report, "row_count_preserved", loss_ok,
+             expected=input_row_count, observed=cand.height,
+             message=f"candidate dropped to {cand.height} from {input_row_count}")
+
+    # --- quality invariants on candidate ---
+    from app.data.quality import run_quality_checks
+
+    quality_report, _ = run_quality_checks(cand, pipeline_id=pipeline_id)
+    _add(report, "quality", quality_report.passed,
+         message=str([c.name for c in quality_report.failed]) or None)
+
+    # --- business invariants (non-negative metrics) passed via candidate columns ---
+    for col in cand.columns:
+        dtype = cand[col].dtype
+        if dtype.is_numeric() and col.lower() in (
+            "revenue", "amount", "price", "total", "sum",
+        ):
+            mn = float(cand[col].min())
+            _add(report, f"invariant.{col}", mn >= 0 or mn is None,
+                 expected=">=0", observed=mn)
+
+    # --- delta comparison when current is healthy ---
+    if cur is not None:
+        cur_rows = cur.height
+        cand_rows = cand.height
+        if cur_rows and cand_rows < cur_rows * 0.95:
+            _add(report, "row_count_vs_current", False,
+                 expected=cur_rows, observed=cand_rows,
+                 message=f"candidate lost >5% vs current ({cur_rows}->{cand_rows})")
+        else:
+            _add(report, "row_count_vs_current", True, expected=cur_rows, observed=cand_rows)
+
+        for col in cur.columns:
+            if not cur[col].dtype.is_numeric() or col not in cand.columns:
+                continue
+            s_cur = float(cur[col].sum())
+            s_cand = float(cand[col].sum())
+            if s_cur != 0 and abs(s_cand - s_cur) / abs(s_cur) > 0.05:
+                _add(report, f"aggregate.{col}", False, expected=s_cur, observed=s_cand,
+                     message=f"{col} sum changed >5%")
+            elif s_cur != 0:
+                _add(report, f"aggregate.{col}", True, expected=s_cur, observed=s_cand)
+
+    return report
