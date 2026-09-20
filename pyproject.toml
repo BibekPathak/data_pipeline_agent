@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "self-healing-pipeline"
+version = "0.1.0"
+description = "Self-Healing Data Pipeline Agent: detect, diagnose, fix, validate, deploy, monitor, rollback."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "BibekP" }]
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "SQLAlchemy>=2.0",
+    "polars>=1.42",
+    "numpy>=2.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "orjson>=3.10",
+    "openai>=1.51",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=7.0",
+]
+
+[project.scripts]
+shp-agent = "app.api.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 70
