@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from app.models import ApprovalStatus, FixOperation, FixOperationType, FixProposal, RiskLevel
+from app.models import ApprovalStatus, FixOperationType, FixProposal, RiskLevel
 from app.models.state import Phase
 
 

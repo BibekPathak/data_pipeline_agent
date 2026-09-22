@@ -7,7 +7,7 @@ mapping — a tool with no safety classification cannot be added to the registry
 
 from __future__ import annotations
 
-from app.agent.policies import ActionClass, PolicyEngine, TOOL_ACTION_CLASS
+from app.agent.policies import PolicyEngine, TOOL_ACTION_CLASS
 from app.tools.base import Tool
 from app.tools.context import ToolContext
 from app.tools.data_tools import DataTools

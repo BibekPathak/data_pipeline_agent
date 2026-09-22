@@ -20,10 +20,8 @@ State is persisted on every phase transition, making a run resumable by run_id.
 from __future__ import annotations
 
 import asyncio
-import time
 import uuid
 from collections.abc import Callable
-from typing import Any
 
 import polars as pl
 
@@ -39,7 +37,6 @@ from app.models import (
     DeploymentStatus,
     DriftEventType,
     FixProposal,
-    Pipeline,
     PipelineTriageState,
     Phase,
     RiskLevel,

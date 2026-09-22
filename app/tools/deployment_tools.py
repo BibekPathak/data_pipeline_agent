@@ -8,7 +8,6 @@ produce ``CANARY_FAILED`` and trigger rollback.
 
 from __future__ import annotations
 
-import polars as pl
 
 from app.agent.policies import ActionClass
 from app.pipeline.runner import run_pipeline

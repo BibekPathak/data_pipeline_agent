@@ -11,8 +11,6 @@ from difflib import SequenceMatcher
 import polars as pl
 
 from app.models import (
-    ColumnDefinition,
-    DataType,
     DriftEvent,
     DriftEventType,
     RenameHypothesis,

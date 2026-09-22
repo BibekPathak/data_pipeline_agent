@@ -1,0 +1,22 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      SHP_LLM_PROVIDER: deterministic
+      SHP_STORAGE_BACKEND: sqlite
+      SHP_DB_PATH: /data/pipeline.db
+      SHP_APPROVAL_MODE: auto
+      SHP_PIPELINE_DIR: /app/pipelines
+      SHP_FIXTURE_DIR: /app/datasets/fixtures
+    volumes:
+      - pipeline-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pipeline-data:

@@ -12,7 +12,7 @@ backends (SQLite, in-memory, and later DuckDB/Postgres) are swappable:
 """
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Any, Protocol, runtime_checkable
 
 import polars as pl

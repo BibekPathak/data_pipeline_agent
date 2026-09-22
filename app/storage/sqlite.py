@@ -21,7 +21,6 @@ from sqlalchemy import (
     Integer,
     String,
     Float,
-    Boolean,
     LargeBinary,
     Text,
     create_engine,

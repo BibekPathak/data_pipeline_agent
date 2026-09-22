@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import polars as pl
 
 from app.agent.policies import ActionClass
 from app.data.anomaly import detect_anomalies

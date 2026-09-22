@@ -29,7 +29,6 @@ from app.models import (
     OnError,
     QualityAnomaly,
     RiskLevel,
-    Severity,
 )
 
 

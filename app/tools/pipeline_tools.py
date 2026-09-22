@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from app.agent.policies import ActionClass
-from app.data.lineage import LineageEdge
 from app.tools.base import tool
 from app.tools.context import ToolContext
 

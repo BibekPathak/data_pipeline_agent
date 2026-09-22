@@ -23,8 +23,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
-import polars as pl
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from app.agent.llm import create_llm

@@ -11,7 +11,7 @@ from __future__ import annotations
 import polars as pl
 
 from app.agent.policies import ActionClass
-from app.models import FixOperation, FixOperationType, Pipeline, ValidationReport
+from app.models import FixOperation, FixOperationType, Pipeline
 from app.pipeline.runner import run_pipeline
 from app.pipeline.stages import apply_fix_operations
 from app.tools.base import tool
@@ -87,7 +87,6 @@ class FixTools:
     @tool("create_pipeline_version", ActionClass.STAGING_WRITE,
           "Persist a new pipeline version with the fix applied.")
     async def create_pipeline_version(self, pipeline_id: str, proposal: dict) -> dict:
-        pipeline = self.ctx.pipelines[pipeline_id]
         new_version = Pipeline.model_validate(proposal)
         new_version.id = pipeline_id
         self.ctx.pipelines[pipeline_id] = new_version

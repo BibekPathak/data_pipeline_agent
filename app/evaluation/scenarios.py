@@ -172,7 +172,6 @@ def _inject_nulls(df: pl.DataFrame, col: str, rate: float, seed: int) -> pl.Data
 
 
 def _inject_duplicates(df: pl.DataFrame, rate: float, seed: int) -> pl.DataFrame:
-    rng = _R(seed)
     n_dups = int(df.height * rate)
     # Duplicate rows VERBATIM (same order_id) so full-row duplicate detection
     # and key-uniqueness checks both fire.

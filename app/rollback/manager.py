@@ -11,7 +11,6 @@ and a rollback after an already-restored state is a no-op.
 from __future__ import annotations
 
 import time
-import uuid
 from dataclasses import dataclass, field
 
 from app.storage.base import Warehouse

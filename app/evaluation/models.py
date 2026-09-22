@@ -12,9 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-import polars as pl
 
-from app.models.state import Phase
 
 
 class ScenarioKind(str, Enum):

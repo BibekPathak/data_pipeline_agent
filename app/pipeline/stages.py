@@ -14,7 +14,7 @@ from typing import Any, Callable
 import polars as pl
 
 from app.models import DataType, FixOperation, FixOperationType, OnError
-from app.pipeline.schemas import logical_to_polars, polars_to_logical
+from app.pipeline.schemas import logical_to_polars
 
 
 class TransformationError(Exception):
