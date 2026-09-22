@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.storage.base import BackendStore, MetadataStore, Warehouse
 from app.storage.memory import MemoryMetadataStore, MemoryWarehouse
 from app.storage.sqlite import SQLiteMetadataStore, SQLiteWarehouse
@@ -24,6 +26,11 @@ def create_store(
 
     if backend == "sqlite":
         path = db_path or "./data/pipeline.db"
+        # SQLite does not create missing parent directories; do it defensively
+        # so a fresh clone (where data/ is not tracked by git) works.
+        parent = Path(path).parent
+        if str(parent) not in ("", "."):
+            parent.mkdir(parents=True, exist_ok=True)
         metadata = SQLiteMetadataStore(path, create=create)
         warehouse = SQLiteWarehouse(path, create=create)
         return BackendStore(metadata, warehouse)
