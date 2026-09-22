@@ -107,15 +107,31 @@ def op_drop_invalid_rows(
     return df.filter(~expr)
 
 
+def _coerce(value: Any, dtype: pl.DataType) -> Any:
+    """Coerce a python scalar to be dtype-compatible for replace operations."""
+    try:
+        if dtype.is_float():
+            return float(value)
+        if dtype.is_integer():
+            return int(float(value))
+        return str(value)
+    except (TypeError, ValueError):
+        return value
+
+
 def op_column_mapping(
     df: pl.DataFrame, column: str, mapping: dict[str, Any], default: Any = None
 ) -> pl.DataFrame:
-    old = list(mapping.keys())
-    new = list(mapping.values())
-    if default is None:
-        mapped = df[column].replace(old, new)
+    # Coerce keys/values/default to the column dtype so a declared mapping
+    # applies uniformly. A corrupting mapping must EXECUTE and be caught by
+    # validation, not crash the engine.
+    dtype = df[column].dtype
+    old = [_coerce(v, dtype) for v in mapping.keys()]
+    new = [_coerce(v, dtype) for v in mapping.values()]
+    if default is not None:
+        mapped = df[column].replace_strict(old, new, default=_coerce(default, dtype))
     else:
-        mapped = df[column].replace_strict(old, new, default=default)
+        mapped = df[column].replace(old, new)
     return df.with_columns(mapped.alias(column))
 
 

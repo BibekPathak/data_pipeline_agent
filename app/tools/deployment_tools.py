@@ -28,7 +28,11 @@ class DeploymentTools:
 
     def __init__(self, ctx: ToolContext) -> None:
         self.ctx = ctx
-        self.rollback = RollbackManager(ctx.store.warehouse, ctx.store.metadata)
+        # Use the context's shared rollback manager (seeded by the runner) so a
+        # prior healthy version exists to restore on rollback.
+        self.rollback = ctx.rollback or RollbackManager(ctx.store.warehouse, ctx.store.metadata)
+        if ctx.rollback is None:
+            ctx.rollback = self.rollback
         self._canary: dict[str, dict] = {}
         self._active_table: dict[str, str] = {}
 

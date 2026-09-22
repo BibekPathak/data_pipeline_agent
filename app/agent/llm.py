@@ -61,6 +61,14 @@ def _propose_cast(event: DriftEvent) -> FixOperation:
     target = event.expected or event.observed
     if target in (None, DataType.UNKNOWN.value):
         target = "DOUBLE"
+    # Timestamps cannot be produced by a plain cast of arbitrary strings; the
+    # safe operation is an explicit parse.
+    if target == DataType.TIMESTAMP.value and event.observed == DataType.VARCHAR.value:
+        return FixOperation(
+            operation=FixOperationType.PARSE_TIMESTAMP,
+            column=event.column,
+            target=None,
+        )
     return FixOperation(
         operation=FixOperationType.CAST_TYPE,
         column=event.column,

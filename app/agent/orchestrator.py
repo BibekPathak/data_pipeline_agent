@@ -31,11 +31,13 @@ from app.agent.diagnosis import DiagnosisEngine
 from app.agent.llm import LLMProvider
 from app.agent.policies import PolicyEngine
 from app.agent.planner import Planner
+from app.data.anomaly import detect_anomalies
 from app.data.schema import compare_schemas
 from app.data.quality import run_quality_checks
 from app.models import (
     ApprovalStatus,
     DeploymentStatus,
+    DriftEventType,
     FixProposal,
     Pipeline,
     PipelineTriageState,
@@ -64,12 +66,14 @@ class TriageConfig:
         timeout_seconds: float = 300.0,
         max_budget_rows: int = 2_000_000,
         approval_mode: str = "auto",
+        force_canary_fail: bool = False,
     ) -> None:
         self.max_iterations = max_iterations
         self.max_tool_calls = max_tool_calls
         self.timeout_seconds = timeout_seconds
         self.max_budget_rows = max_budget_rows
         self.approval_mode = approval_mode
+        self.force_canary_fail = force_canary_fail
 
 
 def auto_approve(risk: RiskLevel, proposal: FixProposal | None = None) -> ApprovalStatus:
@@ -147,8 +151,7 @@ class Orchestrator:
         await self.ctx.store.metadata.record_run(
             run_id=state.run_id, pipeline_id=pipeline_id, status="OBSERVE"
         )
-        # Record a baseline/metric snapshot for anomaly detection history.
-        await self.metrics.record(pipeline.base_input_schema().table, df)
+        # Baseline metrics are recorded at the end of DETECT (see below).
         await self._persist(state)
 
         # ---- DETECT ----
@@ -157,14 +160,47 @@ class Orchestrator:
         observed_schema = infer_schema(df, table=expected.table)
         state.detected_issues = compare_schemas(expected, observed_schema)
         quality_report, quality_anomalies = run_quality_checks(
-            df, pipeline_id=pipeline_id
+            df,
+            pipeline_id=pipeline_id,
+            referenced=self.ctx.references or None,
         )
-        state.quality_anomalies = quality_anomalies
+        state.quality_anomalies = list(quality_anomalies)
+        # Statistical anomaly detection vs historical baseline (deterministic).
+        history = await self.ctx.store.metadata.get_metric_history(
+            expected.table
+        )
+        statistical = detect_anomalies(df, history)
+        seen = {(a.metric, a.column) for a in state.quality_anomalies}
+        for a in statistical:
+            if (a.metric, a.column) not in seen:
+                state.quality_anomalies.append(a)
+                seen.add((a.metric, a.column))
+
+        # Non-breaking column additions are tolerated: quality signals on a
+        # brand-new column (e.g. all-null) are expected and must not trigger a
+        # mutation. Spec: "non-breaking column addition" needs no fix.
+        added_cols = {
+            i.column
+            for i in state.detected_issues
+            if i.type == DriftEventType.COLUMN_ADDED
+        }
+        state.quality_anomalies = [
+            a for a in state.quality_anomalies if a.column not in added_cols
+        ]
+
+        # Rename hypotheses are recorded as *hypotheses*, never facts.
+        from app.data.schema import compute_rename_hypotheses
+
+        rename_hypotheses = compute_rename_hypotheses(expected, observed_schema, df)
         state.schema_context = {
             "expected": expected.model_dump(),
             "observed": observed_schema.model_dump(),
             "issues": [i.model_dump() for i in state.detected_issues],
+            "rename_hypotheses": [h.model_dump() for h in rename_hypotheses],
         }
+        # Record this run's snapshot for FUTURE baselines (after detection, so
+        # the current observation is never part of its own baseline).
+        await self.metrics.record(expected.table, df)
         await self._persist(state)
 
         # ---- DIAGNOSE ----
@@ -222,7 +258,8 @@ class Orchestrator:
 
         # ---- VALIDATE (shadow) ----
         state.bump_phase(Phase.VALIDATE)
-        validation = await self.registry.invoke(
+        validation = await self._invoke(
+            state,
             "validate_transformation",
             Phase.VALIDATE,
             approval=ApprovalStatus.APPROVED,  # shadow write is non-destructive
@@ -261,14 +298,16 @@ class Orchestrator:
             **(pipeline.model_dump()),
             "version": f"{pipeline.version}+{risk.value}",
         }
-        await self.registry.invoke(
+        await self._invoke(
+            state,
             "create_pipeline_version",
             Phase.STAGE,
             approval=state.approval_status,
             pipeline_id=pipeline_id,
             proposal=new_version_payload,
         )
-        await self.registry.invoke(
+        await self._invoke(
+            state,
             "stage_pipeline", Phase.STAGE, approval=state.approval_status,
             pipeline_id=pipeline_id,
         )
@@ -277,7 +316,8 @@ class Orchestrator:
 
         # ---- CANARY ----
         state.bump_phase(Phase.CANARY)
-        canary = await self.registry.invoke(
+        canary = await self._invoke(
+            state,
             "run_canary", Phase.CANARY, approval=state.approval_status,
             pipeline_id=pipeline_id,
             operations=[o.model_dump() for o in state.proposed_fix.operations],
@@ -288,8 +328,8 @@ class Orchestrator:
 
         # ---- MONITOR ----
         state.bump_phase(Phase.MONITOR)
-        health = await self.registry.invoke(
-            "monitor_canary", Phase.MONITOR, pipeline_id=pipeline_id
+        health = await self._invoke(
+            state, "monitor_canary", Phase.MONITOR, pipeline_id=pipeline_id
         )
         # Record candidate metrics (post-fix) for future baselines.
         await self.metrics.record(
@@ -306,11 +346,15 @@ class Orchestrator:
                 for c in report.checks
             ],
         }
-        if not report.healthy or not health.get("passed", True):
+        if not report.healthy or not health.get("passed", True) or self.config.force_canary_fail:
             await self._rollback(
                 state,
                 pipeline_id,
-                reason=f"monitor health failed: {[c.name for c in report.failed_checks()]}",
+                reason=(
+                    "forced canary/partial deployment failure"
+                    if self.config.force_canary_fail
+                    else f"monitor health failed: {[c.name for c in report.failed_checks()]}"
+                ),
             )
             return
 
@@ -323,7 +367,8 @@ class Orchestrator:
         self, state: PipelineTriageState, pipeline_id: str, reason: str
     ) -> None:
         state.bump_phase(Phase.ROLLBACK)
-        result = await self.registry.invoke(
+        result = await self._invoke(
+            state,
             "rollback_pipeline", Phase.ROLLBACK, approval=ApprovalStatus.APPROVED,
             pipeline_id=pipeline_id,
         )
@@ -331,6 +376,13 @@ class Orchestrator:
         state.rollback_status = result.get("reason") or reason
         state.final_result = f"rolled back: {reason}"
         await self._persist(state)
+
+    async def _invoke(self, state, tool_name, phase, approval=None, **kwargs):
+        """Policy-gated tool invocation that also counts tool calls."""
+        state.tool_call_count += 1
+        return await self.registry.invoke(
+            tool_name, phase, approval=approval, **kwargs
+        )
 
     async def _persist(self, state: PipelineTriageState) -> None:
         await self.ctx.store.metadata.save_state(state)

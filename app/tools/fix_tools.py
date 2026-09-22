@@ -11,7 +11,7 @@ from __future__ import annotations
 import polars as pl
 
 from app.agent.policies import ActionClass
-from app.models import FixOperation, Pipeline, ValidationReport
+from app.models import FixOperation, FixOperationType, Pipeline, ValidationReport
 from app.pipeline.runner import run_pipeline
 from app.pipeline.stages import apply_fix_operations
 from app.tools.base import tool
@@ -51,8 +51,23 @@ class FixTools:
             if candidate_pipe.stages else None
         )
 
+        # Business-metric baseline: the raw input is the source of truth. When
+        # the fix itself deduplicates, the baseline excludes the duplicate rows
+        # (removing exact duplicates is the fix, not data loss). The engine
+        # compares the candidate's business metrics (including aliases such as
+        # revenue <- amount) against this baseline so silent corruption cannot
+        # pass as a "fix".
+        has_dedup = any(o.operation == FixOperationType.DEDUPLICATE for o in ops)
+        baseline_df = df.unique() if has_dedup else df
+        expected_aggregates = {
+            col: float(baseline_df[col].cast(pl.Float64, strict=False).sum())
+            for col in baseline_df.columns
+            if baseline_df[col].dtype.is_numeric()
+            and col.lower() in ("amount", "revenue", "price", "total")
+        }
+
         current_run = await run_pipeline(
-            pipeline, df, self.ctx.store.warehouse,
+            pipeline, baseline_df, self.ctx.store.warehouse,
             namespace=self.ctx.active_namespace, persist=False,
         )
         candidate_run = await run_pipeline(
@@ -63,7 +78,9 @@ class FixTools:
             current_run, candidate_run,
             pipeline_id=pipeline_id,
             expected_schema=expected_schema,
-            input_row_count=df.height,
+            input_row_count=baseline_df.height,
+            expected_aggregates=expected_aggregates,
+            input_df=baseline_df,
         )
         return report.model_dump()
 

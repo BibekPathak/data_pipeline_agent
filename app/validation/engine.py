@@ -21,6 +21,11 @@ from app.models import SchemaDefinition, ValidationCheck, ValidationReport, Vali
 from app.pipeline.runner import RunResult
 from app.pipeline.schemas import infer_schema
 
+# Conventional business-metric aliases: aggregated output column -> source
+# input column. Used to compare a candidate's business metric against the raw
+# input even when the current pipeline is broken (no healthy baseline).
+BUSINESS_ALIASES = {"revenue": "amount", "total_revenue": "amount", "total": "amount"}
+
 
 def _add(report: ValidationReport, name: str, ok: bool, **kw) -> None:
     report.checks.append(
@@ -42,6 +47,8 @@ def shadow_validate(
     input_row_count: int | None = None,
     constraints: dict | None = None,
     known_good: pl.DataFrame | None = None,
+    expected_aggregates: dict[str, float] | None = None,
+    input_df: pl.DataFrame | None = None,
 ) -> ValidationReport:
     report = ValidationReport(run_id=run_id)
     cand = candidate.final_df if candidate.ok else None
@@ -120,6 +127,36 @@ def shadow_validate(
         else:
             _add(report, "regression.row_count", True,
                  expected=known_good.height, observed=cand.height)
+
+    # --- expected aggregates (business-metric baseline from input data) ---
+    # When the current pipeline is broken (no healthy baseline to delta against),
+    # the candidate is still compared against aggregates computed from the raw
+    # input, so silent corruption cannot slip through. Handles both row-level
+    # outputs (same column name) and aggregated outputs (revenue <- amount).
+    expected_checks: list[tuple[str, float, float]] = []  # (name, expected, observed)
+
+    for col, expected_sum in (expected_aggregates or {}).items():
+        if col in cand.columns and cand[col].dtype.is_numeric():
+            expected_checks.append((col, expected_sum, float(cand[col].sum())))
+
+    if input_df is not None:
+        for out_col, in_col in BUSINESS_ALIASES.items():
+            if out_col not in cand.columns or not cand[out_col].dtype.is_numeric():
+                continue
+            if in_col not in input_df.columns:
+                continue
+            src = input_df[in_col].cast(pl.Float64, strict=False)
+            expected_sum = float(src.sum())
+            expected_checks.append((out_col, expected_sum, float(cand[out_col].sum())))
+
+    for name, expected_sum, observed_sum in expected_checks:
+        if expected_sum != 0 and abs(observed_sum - expected_sum) / abs(expected_sum) > 0.05:
+            _add(report, f"expected_aggregate.{name}", False,
+                 expected=expected_sum, observed=observed_sum,
+                 message=f"{name} sum diverges from input baseline by >5%")
+        else:
+            _add(report, f"expected_aggregate.{name}", True,
+                 expected=expected_sum, observed=observed_sum)
 
     # --- delta comparison when current is healthy ---
     if cur is not None:

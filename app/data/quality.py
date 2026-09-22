@@ -88,6 +88,36 @@ def run_quality_checks(
             )
         )
 
+    # --- business invariants: non-negative value columns ---
+    for col in df.columns:
+        if not df[col].dtype.is_numeric():
+            continue
+        if col.lower() not in ("amount", "revenue", "price", "total", "sum"):
+            continue
+        mn = df[col].min()
+        if mn is not None and float(mn) < 0:
+            report.checks.append(
+                QualityCheck(
+                    name=f"non_negative.{col}",
+                    column=col,
+                    metric="business_invariant",
+                    threshold=0.0,
+                    observed=float(mn),
+                    status="fail",
+                    message=f"{col} contains negative values (min={mn})",
+                )
+            )
+            anomalies.append(
+                QualityAnomaly(
+                    metric="business_invariant",
+                    column=col,
+                    observed=float(mn),
+                    expected=">=0",
+                    severity=Severity.HIGH,
+                    context="revenue/amount invariant violated",
+                )
+            )
+
     # --- per-column null rates (numeric + any check that targets one) ---
     for col in df.columns:
         nr = df[col].null_count() / rows if rows else 0.0
@@ -136,7 +166,7 @@ def _referential_checks(
         fk = df[key].drop_nulls()
         ref = ref_df[key].drop_nulls()
         ref_set = set(ref.to_list())
-        missing = fk.filter(~fk.is_in(list(ref_set))).height  # type: ignore[arg-type]
+        missing = fk.filter(~fk.is_in(list(ref_set))).len()  # type: ignore[arg-type]
         rate = missing / len(fk) if len(fk) else 0.0
         report.checks.append(
             QualityCheck(

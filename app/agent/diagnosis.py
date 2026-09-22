@@ -93,6 +93,18 @@ class DiagnosisEngine:
                     ],
                 )
             )
+        if "referential_integrity" in metrics:
+            hypotheses.append(
+                Hypothesis(
+                    id=_hid("referential"),
+                    description="Referential integrity broken: orphan foreign keys detected",
+                    confidence=0.88,
+                    evidence=[
+                        f"{a.column}: {a.observed} orphan values"
+                        for a in quality_anomalies if a.metric == "referential_integrity"
+                    ],
+                )
+            )
         if "row_count" in metrics:
             hypotheses.append(
                 Hypothesis(

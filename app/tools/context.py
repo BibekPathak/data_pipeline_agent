@@ -8,6 +8,7 @@ import polars as pl
 
 from app.data.lineage import LineageGraph
 from app.models import Pipeline
+from app.rollback.manager import RollbackManager
 from app.storage.base import BackendStore
 
 
@@ -21,3 +22,15 @@ class ToolContext:
     # Active pipeline version namespace in the warehouse (e.g. "main").
     active_namespace: str = "main"
     shadow_namespace: str = "shadow"
+    # Reference tables for referential-integrity checks: {fk_column: reference_df}
+    references: dict[str, pl.DataFrame] = field(default_factory=dict)
+    # Shared, deterministic version-restore primitive used by deployment tools.
+    rollback: RollbackManager | None = None
+
+
+def make_context(store: BackendStore, **kwargs) -> ToolContext:
+    """Build a ToolContext with a default RollbackManager bound to the store."""
+    ctx = ToolContext(store=store, **kwargs)
+    if ctx.rollback is None:
+        ctx.rollback = RollbackManager(store.warehouse, store.metadata)
+    return ctx
